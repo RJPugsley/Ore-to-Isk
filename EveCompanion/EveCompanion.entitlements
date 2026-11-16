@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	App Sandbox is still OFF for the v1.0 beta (it unpacks CCP's static data with /usr/bin/unzip).
+	Everything the app saves is in ~/Library/Application Support/eve_ore_to_isk; turning the
+	sandbox on (for the App Store) moves that into the app's container.
+	-->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+</dict>
+</plist>

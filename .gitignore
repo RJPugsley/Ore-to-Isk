@@ -1,0 +1,19 @@
+# Xcode – per-user state and build output
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+dist/
+*.xcarchive
+
+# macOS
+.DS_Store
+
+# Never commit secrets, logins or personal data
+.env
+*.env
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+Data/
+Config/
