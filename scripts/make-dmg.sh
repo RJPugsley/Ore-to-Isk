@@ -1,5 +1,5 @@
 #!/bin/bash
-# Packages an exported "EVE Ore to ISK.app" as a drag-to-Applications .dmg, after checking that
+# Packages an exported "EVE Ore to ISK.app" as a drag-to-Applications .dmg and a .zip, after checking that
 # nothing private is inside it. Run on the Mac:   ./scripts/make-dmg.sh "/path/to/EVE Ore to ISK.app"
 set -euo pipefail
 
@@ -26,5 +26,11 @@ cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 rm -f "$OUT/$NAME.dmg"
 hdiutil create -volname "EVE Ore to ISK" -srcfolder "$STAGE" -ov -format UDZO "$OUT/$NAME.dmg" >/dev/null
-( cd "$OUT" && shasum -a 256 "$NAME.dmg" | tee "$NAME.dmg.sha256" )
-echo "Done: $OUT/$NAME.dmg"
+# The same app as a .zip too (ditto keeps the code signature intact).
+rm -f "$OUT/$NAME.zip"
+ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUT/$NAME.zip"
+( cd "$OUT" && shasum -a 256 "$NAME.dmg" "$NAME.zip" | tee "$NAME.sha256" )
+echo "Done:"
+echo "  $OUT/$NAME.dmg"
+echo "  $OUT/$NAME.zip"
+open "$OUT"
