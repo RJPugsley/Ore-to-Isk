@@ -42,4 +42,4 @@ echo "Done:"
 echo "  $OUT/$NAME.dmg"
 echo "  $OUT/$NAME.zip"
 echo "  $OUT/$NAME-release-notes.md  (paste into the GitHub release)"
-open "$OUT"
+[ -t 1 ] && [ -z "${NO_OPEN:-}" ] && open "$OUT" || true
