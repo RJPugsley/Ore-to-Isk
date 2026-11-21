@@ -27,7 +27,7 @@ APP="$ARCHIVE/Products/Applications/EVE Ore to ISK.app"
 [ -d "$APP" ] || { echo "The archive has no app at: $APP"; exit 1; }
 
 echo "2/4 Packaging…"
-"$HERE/scripts/make-dmg.sh" "$APP" "$VERSION"
+bash "$HERE/scripts/make-dmg.sh" "$APP" "$VERSION"
 
 if [ "${1:-}" = "--no-publish" ]; then echo "Stopped before publishing (--no-publish)."; exit 0; fi
 if ! command -v gh >/dev/null; then
