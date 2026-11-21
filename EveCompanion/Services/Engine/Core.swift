@@ -106,34 +106,80 @@ enum ISODate {
 
 // MARK: - Cache (cache with time-to-live)
 
+/// Timed copies of what the app fetched. Each copy lasts until EVE says its next update is
+/// ready (the `Expires` header on EVE's reply); data that doesn't come from EVE's API, or
+/// arrives without that header, lasts the time given at the call (`ttl`).
 actor TTLCache {
     static let shared = TTLCache()
 
-    private var store: [String: (at: Date, value: Any)] = [:]
+    private var store: [String: (at: Date, expires: Date, value: Any)] = [:]
 
-    func get(_ key: String, ttl: TimeInterval) -> Any? {
-        guard let entry = store[key], Date().timeIntervalSince(entry.at) < ttl else { return nil }
+    func get(_ key: String) -> Any? {
+        guard let entry = store[key], Date() < entry.expires else { return nil }
         return entry.value
     }
 
-    func set(_ key: String, _ value: Any) { store[key] = (Date(), value) }
+    func set(_ key: String, _ value: Any, expires: Date) { store[key] = (Date(), expires, value) }
     func remove(_ key: String) { store.removeValue(forKey: key) }
     func fetchedAt(_ key: String) -> Date? { store[key]?.at }
+    func expiresAt(_ key: String) -> Date? { store[key]?.expires }
     /// The last value stored, however old – used when EVE can't be reached.
     func stale(_ key: String) -> Any? { store[key]?.value }
     func removeAll() { store.removeAll() }
 }
 
+/// While a `cached()` loader runs, notes the earliest `Expires` time on EVE's replies.
+final class ExpiryWatch: @unchecked Sendable {
+    @TaskLocal static var current: ExpiryWatch?
+
+    private let lock = NSLock()
+    private var earliest: Date?
+
+    func saw(_ date: Date) { lock.withLock { if earliest.map({ date < $0 }) ?? true { earliest = date } } }
+    var eveExpires: Date? { lock.withLock { earliest } }
+
+    /// EVE's HTTP date, e.g. "Tue, 17 Nov 2026 09:05:21 GMT".
+    static func parse(_ text: String) -> Date? { formatter.date(from: text) }
+    private static let formatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "GMT")
+        f.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        return f
+    }()
+}
+
+/// `ttl` = how long the copy lasts when EVE doesn't say. When EVE does say, its time is used –
+/// except for slow-changing reference data (`ttl` of a day or more: station names, hubs …),
+/// which keeps the longer of the two.
 func cached<T>(_ key: String, ttl: TimeInterval, _ loader: () async throws -> T) async throws -> T {
-    if let hit = await TTLCache.shared.get(key, ttl: ttl) as? T { return hit }
+    let deps = PageMemo.deps
+    if let hit = await TTLCache.shared.get(key) as? T {
+        if let deps, let at = await TTLCache.shared.fetchedAt(key), let until = await TTLCache.shared.expiresAt(key) {
+            deps.used(key, fetchedAt: at, expires: until)
+        }
+        return hit
+    }
     do {
-        let value = try await loader()
-        await TTLCache.shared.set(key, value)
+        let watch = ExpiryWatch()
+        let value = try await PageMemo.$deps.withValue(nil) {
+            try await ExpiryWatch.$current.withValue(watch) { try await loader() }
+        }
+        let now = Date()
+        let ours = now.addingTimeInterval(ttl)
+        var until = ours
+        if let eve = watch.eveExpires {
+            let eveUntil = max(eve, now.addingTimeInterval(10))   // never re-ask within 10 s
+            until = ttl >= 86_400 ? max(eveUntil, ours) : eveUntil
+        }
+        await TTLCache.shared.set(key, value, expires: until)
+        if let deps, let at = await TTLCache.shared.fetchedAt(key) { deps.used(key, fetchedAt: at, expires: until) }
         return value
     } catch {
         // EVE down (daily downtime) or a timeout: use the last copy we had rather than fail.
         // Its time stays as when it was fetched, so "Prices as of" shows how old it is.
         if EveDowntime.isTemporary(error), let old = await TTLCache.shared.stale(key) as? T {
+            deps?.usedLiveData()   // an old copy – don't keep a page built on it
             return old
         }
         throw error

@@ -92,6 +92,7 @@ enum ESI {
 
     static func send(_ endpoint: String, params: [String: String] = [:], auth: Bool = true,
                      method: String = "GET", body: Data? = nil) async throws -> (Data, HTTPURLResponse) {
+        PageMemo.deps?.usedLiveData()   // read straight from EVE (not a timed copy) – page always recalculates
         let target = url(endpoint, params: params)
         var request = URLRequest(url: target)
         request.httpMethod = method
@@ -129,6 +130,10 @@ enum ESI {
                 guard (200..<300).contains(http.statusCode) else {
                     throw ESIError(status: http.statusCode, path: target.absoluteString,
                                    body: String(decoding: data, as: UTF8.self))
+                }
+                if let watch = ExpiryWatch.current,
+                   let text = http.value(forHTTPHeaderField: "Expires"), let date = ExpiryWatch.parse(text) {
+                    watch.saw(date)   // when EVE will have new data for this
                 }
                 return (data, http)
             } catch {

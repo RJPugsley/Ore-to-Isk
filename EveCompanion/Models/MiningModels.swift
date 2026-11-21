@@ -84,6 +84,61 @@ struct BuildPlan: Decodable {
     let highsecOnly: Bool
     let bands: String?
     let warnings: [String]
+    /// Cost, sale and profit (19 Nov 2026) – valued like Build vs Sell.
+    let economics: PlanMoney?
+    /// Stock the plan uses from stations other than your Stock location.
+    let fromElsewhere: [StockElsewhere]?
+    /// When stock-origin tracking began (starting snapshot = "already had").
+    let originSince: String?
+    let originStartedNow: Bool?
+}
+
+struct StockElsewhere: Decodable, Identifiable {
+    let typeId: Int
+    let name: String
+    let quantity: Int
+    let locationId: Int
+    let location: String
+    var id: String { "\(typeId)-\(locationId)" }
+}
+
+/// What the plan costs, sells for and makes. All optional: missing prices leave gaps.
+struct PlanMoney: Decodable {
+    let items: [PlanItemMoney]?
+    let cost: Double?
+    let costMinerals: Double?
+    let costBought: Double?
+    let costFees: Double?
+    let sellsFor: Double?
+    let profit: Double?
+    let profitPercent: Double?
+    let profitIfMinedFree: Double?
+    let minedMineralsValue: Double?
+    /// Positive = building the components yourself is cheaper than buying them.
+    let buildingComponentsSaves: Double?
+    let unsoldCount: Int?
+    let sellHubSetting: String?
+    /// Minerals taken from stock: the bought part (market value, and what you paid) and the
+    /// mined / already-had part (market value). From the Track Record stock pool.
+    let stockBoughtValue: Double?
+    let stockPaid: Double?
+    let stockFreeValue: Double?
+    /// The free part split: mined · other source (loot, salvage…) · already had.
+    let stockMinedValue: Double?
+    let stockOtherValue: Double?
+    let stockHadValue: Double?
+    /// Only ISK actually spent: bought stock at what you paid, things to buy, job fees.
+    let cashCost: Double?
+    let cashProfit: Double?
+}
+
+struct PlanItemMoney: Decodable {
+    let blueprintTypeId: Int
+    let cost: Double?
+    let sellsFor: Double?
+    let sellHub: String?
+    let profit: Double?
+    let profitPercent: Double?
 }
 
 struct PlanItemResult: Decodable, Identifiable {

@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct IndustryJobsView: View {
+    @State private var highlight = RowHighlights()
     @Environment(AppState.self) private var appState
     @AppStorage(HistoryRange.key) private var rangeDays = HistoryRange.defaultDays
     @State private var completed: CompletedJobs?
@@ -8,8 +9,11 @@ struct IndustryJobsView: View {
 
     var body: some View {
         VSplitView {
-            activeJobs
-                .frame(minHeight: 140, maxHeight: .infinity)
+            VStack(spacing: 0) {
+                slotStrip
+                activeJobs
+            }
+            .frame(minHeight: 220, maxHeight: .infinity)
             completedJobs
                 .frame(minHeight: 180, maxHeight: .infinity)
         }
@@ -24,6 +28,138 @@ struct IndustryJobsView: View {
             } catch {
                 completedError = error.localizedDescription
             }
+        }
+    }
+
+    // MARK: Job slots
+
+    /// Skill type IDs (CCP static data).
+    private enum SlotSkill {
+        static let massProduction = 3387
+        static let advancedMassProduction = 24625
+        static let laboratoryOperation = 3406
+        static let advancedLaboratoryOperation = 24624
+        static let massReactions = 45748
+        static let advancedMassReactions = 45749
+    }
+
+    private struct SlotGroup: Identifiable {
+        let id: String
+        let title: String
+        let icon: String
+        let used: Int
+        let ready: Int
+        /// nil = skills not loaded yet.
+        let max: Int?
+        let help: String
+    }
+
+    /// Active skill level, 0 if untrained; nil while skills aren't loaded.
+    private func level(_ skillID: Int) -> Int? {
+        guard let skills = appState.skills else { return nil }
+        return skills.skills.first(where: { $0.skillId == skillID })?.activeSkillLevel ?? 0
+    }
+
+    private func slotGroup(id: String, title: String, icon: String, activities: Set<IndustryActivity>,
+                           skill1: Int, name1: String, skill2: Int, name2: String) -> SlotGroup {
+        // Finished jobs keep their slot until delivered, so count everything not delivered / cancelled.
+        let jobs = appState.industryJobs.filter {
+            activities.contains($0.activity) && $0.status != "delivered" && $0.status != "cancelled"
+        }
+        let ready = jobs.filter(\.isReady).count
+        var maxSlots: Int?
+        var help = "Slots = 1 + \(name1) + \(name2)."
+        if let l1 = level(skill1), let l2 = level(skill2) {
+            maxSlots = 1 + l1 + l2
+            help = "Slots = 1 + \(name1) (\(l1)) + \(name2) (\(l2))."
+        }
+        help += "\nFinished jobs still use a slot until you deliver them."
+        return SlotGroup(id: id, title: title, icon: icon, used: jobs.count, ready: ready, max: maxSlots, help: help)
+    }
+
+    private var slotGroups: [SlotGroup] {
+        var groups = [
+            slotGroup(id: "manufacturing", title: "Manufacturing", icon: "hammer",
+                      activities: [.manufacturing],
+                      skill1: SlotSkill.massProduction, name1: "Mass Production",
+                      skill2: SlotSkill.advancedMassProduction, name2: "Advanced Mass Production"),
+            slotGroup(id: "science", title: "Science", icon: "flask.fill",
+                      activities: [.researchTE, .researchME, .copying, .invention, .reverseEngineering],
+                      skill1: SlotSkill.laboratoryOperation, name1: "Laboratory Operation",
+                      skill2: SlotSkill.advancedLaboratoryOperation, name2: "Advanced Laboratory Operation"),
+        ]
+        let reactions = slotGroup(id: "reactions", title: "Reactions", icon: "flask",
+                                  activities: [.reactions, .reactions2],
+                                  skill1: SlotSkill.massReactions, name1: "Mass Reactions",
+                                  skill2: SlotSkill.advancedMassReactions, name2: "Advanced Mass Reactions")
+        // Only shown once you react (or have the skill) – keeps the strip to the two you use.
+        if reactions.used > 0 || (level(SlotSkill.massReactions) ?? 0) > 0 {
+            groups.append(reactions)
+        }
+        return groups
+    }
+
+    private var slotStrip: some View {
+        HStack(spacing: 12) {
+            ForEach(slotGroups) { group in
+                SlotTile(group: group)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+    }
+
+    private struct SlotTile: View {
+        let group: SlotGroup
+
+        var body: some View {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(group.title, systemImage: group.icon)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(valueText)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(valueColor)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    if let maxSlots = group.max, maxSlots > 0 {
+                        ProgressView(value: Double(min(group.used, maxSlots)), total: Double(maxSlots))
+                            .tint(valueColor == .primary ? .accentColor : valueColor)
+                    }
+                    Text(detailText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .help(group.help)
+        }
+
+        private var free: Int? { group.max.map { Swift.max($0 - group.used, 0) } }
+
+        private var valueText: String {
+            guard let maxSlots = group.max else { return "\(group.used) running" }
+            return "\(group.used) of \(maxSlots) in use"
+        }
+
+        private var valueColor: Color {
+            guard let free else { return .primary }
+            return free == 0 ? .orange : .green
+        }
+
+        private var detailText: String {
+            var parts: [String] = []
+            if let free {
+                parts.append(free == 0 ? "All slots in use" : "\(free) more you can start")
+            } else {
+                parts.append("Loading skills…")
+            }
+            if group.ready > 0 { parts.append("\(group.ready) ready to deliver") }
+            return parts.joined(separator: " · ")
         }
     }
 
@@ -45,7 +181,7 @@ struct IndustryJobsView: View {
             .padding(.vertical, 8)
 
             if let completed {
-                Table(completed.jobs) {
+                Table(completed.jobs, selection: highlight.row("t48")) {
                     TableColumn("Finished") { job in
                         Text(job.endDate.formatted(date: .abbreviated, time: .shortened)).monospacedDigit()
                     }
@@ -123,7 +259,7 @@ struct IndustryJobsView: View {
             } else {
                 // Re-render every 30 s so progress bars move.
                 TimelineView(.periodic(from: .now, by: 30)) { context in
-                    List(appState.industryJobs) { job in
+                    List(appState.industryJobs, selection: highlight.row("active") as Binding<IndustryJob.ID?>) { job in
                         IndustryJobRow(job: job, now: context.date)
                             .contextMenu {
                                 if let product = job.productTypeId {

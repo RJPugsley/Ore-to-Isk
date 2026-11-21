@@ -73,6 +73,8 @@ final class ActivityCenter {
         case "finances/summary", "dashboard/wallet": return "Updating finances"
         case "mining/ledger": return "Updating the mining ledger"
         case "reprocessing/summary", "reprocessing/ores": return "Working out reprocessing"
+        case "reprocess-or-sell/summary": return "Checking what's worth reprocessing"
+        case "reprocess-or-sell/item": return "Pricing at all five hubs"
         case "character/summary", "character": return "Updating your pilot"
         case "esi/skills", "esi/skillqueue", "sde/skills": return "Updating skills"
         case "esi/blueprints": return "Reading your blueprints"
@@ -81,7 +83,7 @@ final class ActivityCenter {
         case "history/track-record", "history/order-results", "history/net-worth": return "Reading your history"
         case "sde/update": return "Updating static data"
         // Typing suggestions, small lookups and settings – fast, not worth a popup.
-        case "reference/suggest", "market/search", "market/names", "haul/places", "industry/systems",
+        case "reference/suggest", "reprocess-or-sell/suggest", "market/search", "market/names", "haul/places", "industry/systems",
              "reference/materials", "health", "sde/status", "history/watchlist", "history/watch",
              "reference/blueprint-categories", "market/hubs", "esi/locations":
             return nil

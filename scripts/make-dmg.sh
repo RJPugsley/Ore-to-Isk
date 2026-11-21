@@ -4,7 +4,7 @@
 set -euo pipefail
 
 APP="${1:?Give the path to the exported EVE Ore to ISK.app}"
-VERSION="${2:-1.0-beta}"
+VERSION="${2:-1.4-beta}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$HERE/dist"
 NAME="EVE-Ore-to-ISK-$VERSION"
@@ -24,13 +24,22 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
+# The read-me files go in the .dmg next to the app.
+mkdir -p "$STAGE/Read Me"
+for f in README.md RELEASE_NOTES.md CHANGELOG.md LICENSE; do
+  [ -f "$HERE/$f" ] && cp "$HERE/$f" "$STAGE/Read Me/"
+done
 rm -f "$OUT/$NAME.dmg"
 hdiutil create -volname "EVE Ore to ISK" -srcfolder "$STAGE" -ov -format UDZO "$OUT/$NAME.dmg" >/dev/null
 # The same app as a .zip too (ditto keeps the code signature intact).
 rm -f "$OUT/$NAME.zip"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUT/$NAME.zip"
 ( cd "$OUT" && shasum -a 256 "$NAME.dmg" "$NAME.zip" | tee "$NAME.sha256" )
+# A copy of the release notes with the .dmg checksum filled in, ready to paste into GitHub.
+SHA=$(shasum -a 256 "$OUT/$NAME.dmg" | cut -d' ' -f1)
+sed "s/SHA256_HERE/$SHA/" "$HERE/RELEASE_NOTES.md" > "$OUT/$NAME-release-notes.md"
 echo "Done:"
 echo "  $OUT/$NAME.dmg"
 echo "  $OUT/$NAME.zip"
+echo "  $OUT/$NAME-release-notes.md  (paste into the GitHub release)"
 open "$OUT"

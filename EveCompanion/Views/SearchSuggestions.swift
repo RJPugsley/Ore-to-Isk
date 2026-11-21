@@ -1,10 +1,11 @@
 import SwiftUI
+import AppKit
 
 // MARK: - Search with suggestions
 
 /// The app's search box with predictive suggestions: as you type, up to 8 matches drop down
 /// underneath. Click one (or use ↑ ↓ and Return) to fill it in; Escape closes the list.
-/// Put `.zIndex(1)` on the bar that holds it so the list draws over the table below.
+/// The list opens in a small floating window (`SuggestionPanelAnchor`), so it is always on top and solid.
 struct SuggestingSearchField: View {
     let prompt: String
     @Binding var text: String
@@ -20,18 +21,14 @@ struct SuggestingSearchField: View {
 
     @State private var suggestions: [String] = []
     @State private var highlighted: Int?
-    /// Height of the suggestion rows, measured – the box is exactly that tall (up to 10 rows, then it scrolls).
-    @State private var listHeight: CGFloat = 0
     @State private var showing = false
     @State private var picking = false
     @FocusState private var focused: Bool
 
-    /// Tall enough for every row, but no more than 10 – past that the list scrolls.
+    /// Each suggestion row is this tall; the box fits up to 10 rows, then scrolls.
+    private static let rowHeight: CGFloat = 24
     private var boxHeight: CGFloat {
-        let rows = visible.count
-        guard rows > 0, listHeight > 0 else { return 30 }
-        let perRow = (listHeight - 8) / CGFloat(rows)   // 8 = the list's padding
-        return rows > 10 ? perRow * 10 + 8 : listHeight
+        CGFloat(min(visible.count, 10)) * Self.rowHeight + 8   // 8 = the list's padding
     }
 
     private var visible: [String] {
@@ -77,47 +74,9 @@ struct SuggestingSearchField: View {
         .padding(.vertical, 5)
         .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
         .frame(width: width)
-        .overlay(alignment: .topLeading) {
-            if showing && !visible.isEmpty {
-                ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(visible.indices, id: \.self) { index in
-                        Button {
-                            pick(visible[index])
-                        } label: {
-                            HStack(spacing: 6) {
-                                if let icon, let mark = icon(visible[index]) {
-                                    Image(systemName: mark.0).foregroundStyle(mark.1).frame(width: 16)
-                                }
-                                Text(visible[index]).lineLimit(1)
-                            }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .contentShape(Rectangle())
-                                .background(index == highlighted ? Color.accentColor.opacity(0.3) : Color.clear,
-                                            in: RoundedRectangle(cornerRadius: 4))
-                        }
-                        .buttonStyle(.plain)
-                        .onHover { inside in if inside { highlighted = index } }
-                    }
-                }
-                .padding(4)
-                .background(GeometryReader { geo in
-                    Color.clear.preference(key: SuggestionListHeight.self, value: geo.size.height)
-                })
-                }
-                .onPreferenceChange(SuggestionListHeight.self) { listHeight = $0 }
-                .frame(height: boxHeight)
-                // Wide enough for long station names; a solid background so nothing shows through.
-                .frame(minWidth: width, maxWidth: max(width, 460), alignment: .leading)
-                .fixedSize(horizontal: true, vertical: false)
-                .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
-                .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
-                .offset(y: 32)
-            }
-        }
+        // The list opens in its own small window attached to this one, so it is always on top
+        // of everything on the page and never shows anything through it.
+        .background(SuggestionPanelAnchor(isShown: showing && !visible.isEmpty, content: AnyView(suggestionList)))
         .zIndex(10)
         .task(id: text) {
             if picking {   // the text changed because a suggestion was picked – don't reopen
@@ -149,6 +108,41 @@ struct SuggestingSearchField: View {
         }
     }
 
+    private var suggestionList: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(visible.indices, id: \.self) { index in
+                    Button {
+                        pick(visible[index])
+                    } label: {
+                        HStack(spacing: 6) {
+                            if let icon, let mark = icon(visible[index]) {
+                                Image(systemName: mark.0).foregroundStyle(mark.1).frame(width: 16)
+                            }
+                            Text(visible[index]).lineLimit(1)
+                        }
+                        .padding(.horizontal, 8)
+                        .frame(maxWidth: .infinity, minHeight: Self.rowHeight, maxHeight: Self.rowHeight, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .background(index == highlighted ? Color.accentColor.opacity(0.3) : Color.clear,
+                                    in: RoundedRectangle(cornerRadius: 4))
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { inside in if inside { highlighted = index } }
+                }
+            }
+            .padding(4)
+        }
+        .scrollIndicators(visible.count > 10 ? .automatic : .never)
+        .frame(height: boxHeight)
+        // Wide enough for long station names.
+        .frame(minWidth: width, maxWidth: max(width, 460), alignment: .leading)
+        .fixedSize(horizontal: true, vertical: false)
+        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
     private func pick(_ value: String) {
         picking = true
         text = value
@@ -170,8 +164,88 @@ func localSuggestions(_ query: String, from names: [String], limit: Int = 8) -> 
     return Array((starts + contains).prefix(limit))
 }
 
-/// Height of the suggestion rows inside the drop-down.
-private struct SuggestionListHeight: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+// MARK: - Floating suggestion panel
+
+/// Shows `content` in a borderless child window just under the view it's attached to.
+/// The main window stays key, so typing carries on in the search field.
+struct SuggestionPanelAnchor: NSViewRepresentable {
+    let isShown: Bool
+    let content: AnyView
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        let coordinator = context.coordinator
+        if isShown {
+            // After layout, so the anchor's position on screen is final.
+            DispatchQueue.main.async { coordinator.show(content, under: view) }
+        } else {
+            coordinator.hide()
+        }
+    }
+
+    static func dismantleNSView(_ view: NSView, coordinator: Coordinator) {
+        coordinator.hide()
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    @MainActor final class Coordinator {
+        private var panel: SuggestionPanel?
+        private var hosting: FirstClickHostingView?
+        private weak var parent: NSWindow?
+
+        func show(_ content: AnyView, under anchor: NSView) {
+            guard let window = anchor.window else { return }
+            let panel = self.panel ?? makePanel()
+            if let hosting {
+                hosting.rootView = content
+            } else {
+                let view = FirstClickHostingView(rootView: content)
+                hosting = view
+                panel.contentView = view
+            }
+            let size = hosting?.fittingSize ?? .zero
+            let inWindow = anchor.convert(anchor.bounds, to: nil)
+            let onScreen = window.convertToScreen(inWindow)
+            panel.setFrame(NSRect(x: onScreen.minX, y: onScreen.minY - 3 - size.height,
+                                  width: size.width, height: size.height), display: true)
+            if parent !== window {
+                parent?.removeChildWindow(panel)
+                window.addChildWindow(panel, ordered: .above)
+                parent = window
+            }
+            panel.orderFront(nil)
+        }
+
+        func hide() {
+            guard let panel else { return }
+            parent?.removeChildWindow(panel)
+            parent = nil
+            panel.orderOut(nil)
+        }
+
+        private func makePanel() -> SuggestionPanel {
+            let panel = SuggestionPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
+                                        backing: .buffered, defer: true)
+            panel.isOpaque = false
+            panel.backgroundColor = .clear
+            panel.hasShadow = true
+            panel.hidesOnDeactivate = true
+            panel.isReleasedWhenClosed = false
+            self.panel = panel
+            return panel
+        }
+    }
+}
+
+/// Never takes keyboard focus away from the window with the search field.
+final class SuggestionPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
+/// A click on a suggestion works first time, without having to activate the panel.
+final class FirstClickHostingView: NSHostingView<AnyView> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }

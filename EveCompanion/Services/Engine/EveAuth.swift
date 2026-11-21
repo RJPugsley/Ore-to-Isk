@@ -189,7 +189,7 @@ actor EveAuth {
                 // EVE turned the login down (revoked, or made with a different EVE application):
                 // forget it so the app shows "log in" instead of an error on every page.
                 if case let AuthError.http(code, _) = error, (400..<500).contains(code) {
-                    await self.logOut()
+                    self.logOut()
                     throw AuthError.notLoggedIn
                 }
                 throw error

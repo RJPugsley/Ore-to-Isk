@@ -164,7 +164,9 @@ enum Mining {
 
     static func buildPlan(items: [PlanItem], structure: String, rigME: Double, subtractStock: Bool,
                      stockLocation: Int?, refineryLocation: Int?, settings: Reprocessing.Settings,
-                     bands: Set<String>, hub: String, breakDown: Bool = true) async throws -> JSONDict {
+                     bands: Set<String>, hub: String, breakDown: Bool = true,
+                     systemID: Int? = nil, facilityTax: Double? = nil, sellHub: String = "best",
+                     useElsewhere: Bool = true) async throws -> JSONDict {
         let levels = try await Market.skillLevels()
         let bonuses = IndustryCalc.structures[structure] ?? IndustryCalc.structures["npc"]!
 
@@ -203,13 +205,25 @@ enum Mining {
         // ---- What you already have ----
         var have: [Int: Int] = [:]
         var warnings: [String] = []
+        // Stock at your Stock location ("here") first; with useElsewhere, what you own at other
+        // stations counts too (listed so you know to fetch it).
+        var haveHere: [Int: Int] = [:]
+        var elsewhere: [Int: [Int: Int]] = [:]   // type → place → quantity
         if subtractStock {
-            do { have = try await Market.ownedQuantities(stockLocation) }
+            do {
+                haveHere = try await Market.ownedQuantities(stockLocation)
+                have = haveHere
+                if useElsewhere, let stockLocation, stockLocation != 0 {
+                    elsewhere = try await Market.ownedByLocation(excluding: stockLocation)
+                    for (type, places) in elsewhere { have[type, default: 0] += places.values.reduce(0, +) }
+                }
+            }
             catch { warnings.append("Couldn't read your assets: \(error.localizedDescription)") }
             if let refineryLocation, refineryLocation != 0 {
                 do {
                     for (type, qty) in try await Reprocessing.mineralsFromOre(refineryLocation, settings, levels) {
                         have[type, default: 0] += qty
+                        haveHere[type, default: 0] += qty
                     }
                 } catch { warnings.append("Couldn't work out minerals from your ore: \(error.localizedDescription)") }
             }
@@ -476,6 +490,63 @@ enum Mining {
         }
         let ownedComponentBlueprints: Int = buildFirst.filter { $0.bool("owned") }.count
 
+        // ---- Stock the plan takes from other stations (to fetch before you build) ----
+        var fromElsewhere: [JSONDict] = []
+        if !elsewhere.isEmpty {
+            var picks: [(type: Int, place: Int, qty: Int)] = []
+            for type in neededOrder {
+                guard let places = elsewhere[type] else { continue }
+                var short = max(0, (needed[type] ?? 0) - (haveHere[type] ?? 0))
+                for (place, qty) in places.sorted(by: { $0.value > $1.value }) where short > 0 {
+                    let take = min(qty, short)
+                    picks.append((type, place, take))
+                    short -= take
+                }
+            }
+            if !picks.isEmpty {
+                let placeNames = await ESI.resolveLocations(Array(Set(picks.map { $0.place })))
+                let pickNames = try SDE.typeNames(Set(picks.map { $0.type }))
+                for p in picks {
+                    let placeName = (placeNames[String(p.place)] as? JSONDict)?.string("name") ?? String(p.place)
+                    fromElsewhere.append(["type_id": p.type, "name": pickNames[p.type] ?? String(p.type),
+                                          "quantity": p.qty, "location_id": p.place, "location": placeName])
+                }
+            }
+        }
+
+        // ---- Money: cost, sale, profit (same valuation as Build vs Sell) ----
+        var componentRuns: [Int: Int] = [:]
+        for row in buildFirst {
+            if let type = row.int("type_id"), let runs = row.int("runs"), runs > 0 { componentRuns[type] = runs }
+        }
+        var toBuy: [Int: Int] = [:]   // what's left to get after stock – the cash you'll spend
+        for row in otherNeeds {
+            if let type = row.int("type_id"), let qty = row.int("to_get"), qty > 0 { toBuy[type] = qty }
+        }
+        var economics: JSONDict = [:]
+        // What your stock cost you (bought part, at price paid) – only matters when stock is used.
+        var boughtStock: [Int: (qty: Double, cost: Double)] = [:]
+        if subtractStock {
+            let oreShares = (try? await boughtOreAsMinerals(settings: settings, levels: levels)) ?? [:]
+            boughtStock = (try? await HistoryReports.boughtStock(oreAsMinerals: oreShares)) ?? [:]
+        }
+        // How the free part (not bought / built) splits: mined · other source (loot…) · already had.
+        var freeSplit: StockOrigin.Result?
+        if subtractStock {
+            freeSplit = try? await StockOrigin.freeSplit(types: Set(needed.keys), boughtStock: boughtStock,
+                                                        settings: settings, levels: levels)
+        }
+        do {
+            economics = try await PlanEconomics.work(
+                items: items, mineable: mineable, bestME: bestME, componentRuns: componentRuns,
+                breakDown: breakDown, structure: structure, rigME: rigME, systemID: systemID,
+                facilityTax: facilityTax, materialHub: hub, sellHub: sellHub, mineralsToMine: toMine,
+                needed: needed, have: have, boughtStock: boughtStock, toBuy: toBuy,
+                freeSplit: freeSplit?.split ?? [:])
+        } catch {
+            warnings.append("Couldn't work out the profit: \(error.localizedDescription)")
+        }
+
         let totalM3: Double = oreRowsOut.reduce(0.0) { $0 + ($1.double("m3") ?? 0) }
         let totalUnits: Int = oreRowsOut.reduce(0) { $0 + ($1.int("units") ?? 0) }
         return [
@@ -495,7 +566,53 @@ enum Mining {
             "highsec_only": bands == ["High"],
             "bands": bandList(bands),
             "warnings": warnings,
+            "economics": economics,
+            "from_elsewhere": fromElsewhere,
+            "origin_since": freeSplit?.since as Any,
+            "origin_started_now": freeSplit?.startedNow ?? false,
         ]
+    }
+
+    /// Every ore (or ice) you've ever bought on the market, as the minerals one unit refines into
+    /// at your yield, with each mineral's share of the ore's value (CCP adjusted prices).
+    static func boughtOreAsMinerals(settings: Reprocessing.Settings, levels: [Int: Int]) async throws
+        -> [Int: [HistoryReports.OreShare]] {
+        let cid = try await EveAuth.shared.characterID()
+        let rows = try await HistoryStore.shared.query(
+            "SELECT DISTINCT type_id FROM transactions WHERE character_id = ? AND is_buy = 1", [cid])
+        return try await oreAsMinerals(rows.compactMap { $0.int("type_id") }, settings: settings, levels: levels)
+    }
+
+    /// Any of these that are ore (or ice): the minerals one unit refines into at your yield,
+    /// with each mineral's share of the ore's value. Non-ore ids are left out.
+    static func oreAsMinerals(_ ids: [Int], settings: Reprocessing.Settings, levels: [Int: Int]) async throws
+        -> [Int: [HistoryReports.OreShare]] {
+        guard !ids.isEmpty else { return [:] }
+        let info = try SDE.typesInfo(ids)
+        let ores = ids.filter { info[$0]?.int("category_id") == Reprocessing.asteroidCategory }
+        guard !ores.isEmpty else { return [:] }
+        let (oreFactor, iceFactor) = try settings.factors(levels)
+        let dogma = SDE.reprocessSkills(ores)
+        let adjusted = (try? await Market.adjustedPrices()) ?? [:]
+        var result: [Int: [HistoryReports.OreShare]] = [:]
+        for ore in ores {
+            guard let t = info[ore] else { continue }
+            let family = t.string("group_name")
+            let portion = Double(max(1, t.int("portion_size") ?? 1))
+            let skill = Reprocessing.skillFor(ore, family, dogma)
+            let rate = try Reprocessing.yieldFor(family, levels, oreFactor, iceFactor, skill: skill).rate
+            var parts: [(mineral: Int, perUnit: Double, value: Double)] = []
+            for m in t.dicts("materials") {
+                let mineral = m.int("material_type_id") ?? 0
+                let perUnit = Double(m.int("quantity") ?? 0) * rate / portion
+                guard perUnit > 0 else { continue }
+                parts.append((mineral, perUnit, perUnit * (adjusted[mineral] ?? 1)))
+            }
+            let total = parts.reduce(0.0) { $0 + $1.value }
+            guard total > 0 else { continue }
+            result[ore] = parts.map { HistoryReports.OreShare(mineral: $0.mineral, perUnit: $0.perUnit, share: $0.value / total) }
+        }
+        return result
     }
 
     /// Fewest whole batches of `ore` that give at least `target` of every mineral.

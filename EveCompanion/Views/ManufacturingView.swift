@@ -27,6 +27,7 @@ private struct CalcKey: Hashable {
 }
 
 struct ManufacturingView: View {
+    @State private var highlight = RowHighlights()
     @Environment(AppState.self) private var appState
 
     @AppStorage(BuildSettingsKey.systemId) private var systemId = BuildSettingsKey.defaultSystemId
@@ -187,7 +188,12 @@ struct ManufacturingView: View {
             guard let product = selectedProduct else { return }
             me = product.me ?? 0
             te = product.te ?? 0
-            runs = 1
+            // A copy you own: start at all the runs it has left (one job can use them all).
+            if product.isCopy == true, let left = product.runs, left > 0 {
+                runs = left
+            } else {
+                runs = 1
+            }
         }
     }
 
@@ -286,7 +292,12 @@ struct ManufacturingView: View {
                 TextField("Runs", value: $runs, format: .number)
                     .frame(width: 60)
                     .multilineTextAlignment(.trailing)
-                Stepper("Runs", value: $runs, in: 1...10_000).labelsHidden()
+                Stepper("Runs", value: $runs, in: 1...maxRuns(product)).labelsHidden()
+                if product.isCopy == true {
+                    Text("of \(maxRuns(product)) left on your copy")
+                        .foregroundStyle(.secondary)
+                        .help("A blueprint copy can't run more than the runs it has left.")
+                }
             }
             HStack(spacing: 6) {
                 Text("ME")
@@ -301,8 +312,15 @@ struct ManufacturingView: View {
             Spacer()
         }
         .onChange(of: runs) { _, newValue in
-            if newValue < 1 { runs = 1 }
+            let limit = maxRuns(product)
+            if newValue < 1 { runs = 1 } else if newValue > limit { runs = limit }
         }
+    }
+
+    /// Most runs one job can use: a copy you own is capped at the runs it has left.
+    private func maxRuns(_ product: ProductOption) -> Int {
+        if product.isCopy == true, let left = product.runs, left > 0 { return left }
+        return 10_000
     }
 
     private func summary(_ result: CalcResult) -> some View {
@@ -349,7 +367,7 @@ struct ManufacturingView: View {
                 PageKeyButton(columns: Self.columnKey)
             }
 
-            Table(result.hubs) {
+            Table(result.hubs, selection: highlight.row("t369")) {
                 TableColumn("Hub") { hub in
                     HStack(spacing: 4) {
                         if hub.hub == result.bestHub {
@@ -445,7 +463,7 @@ struct ManufacturingView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Materials").font(.headline)
 
-            Table(result.materials) {
+            Table(result.materials, selection: highlight.row("t465")) {
                 TableColumn("Material") { material in
                     HStack(spacing: 6) {
                         AsyncImage(url: PublicESIClient.typeIconURL(typeID: material.typeId, size: 32)) { image in

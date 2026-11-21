@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Every ore and ice in the game and what it reprocesses into. Search by ore, family or mineral.
 struct OreDatabaseView: View {
+    @State private var highlight = RowHighlights()
     @Environment(AppState.self) private var appState
     @Environment(\.openWindow) private var openWindow
 
@@ -48,7 +49,7 @@ struct OreDatabaseView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
-                Table(filtered, sortOrder: $sortOrder) {
+                Table(filtered, selection: highlight.row("t51"), sortOrder: $sortOrder) {
                     TableColumn("Ore", value: \.name) { ore in
                         HStack(spacing: 6) {
                             AsyncImage(url: PublicESIClient.typeIconURL(typeID: ore.typeId, size: 32)) { image in

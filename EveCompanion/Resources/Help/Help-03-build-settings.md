@@ -9,7 +9,7 @@ keywords: settings, build location, facility, structure, rigs, ME rig, TE rig, f
 related: manufacturing, reprocessing, build-planner, walk-reprocess-or-sell
 summary: Tell the app where you build, where you buy materials, where your stock is and how well your refinery works. The welcome screen asks for these the first time.
 ---
-Build Settings is where the app learns the parts of your setup that it can't read from the game. Open it with the **Build Settings** button on the Manufacturing page, or the **Settings** button on the Reprocessing page. It opens as a panel on the right.
+Build Settings is where the app learns the parts of your setup that it can't read from the game. Open it with the **Build Settings** button on the Manufacturing page, or the **Settings** button on the Ore Reprocessing page. It opens as a panel on the right.
 
 ## Build Location
 

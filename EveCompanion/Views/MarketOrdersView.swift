@@ -8,6 +8,8 @@ struct MyOrdersSummary: Decodable {
     let sellCount: Int
     let buyCount: Int
     let sellValue: Double
+    /// What's left on your sell orders after sales tax, fees and what the items cost you.
+    let sellNetValue: Double?
     let escrow: Double
     let beatenCount: Int
     let orders: [MyOrder]
@@ -30,8 +32,40 @@ struct MyOrder: Decodable, Identifiable {
     let bestOther: Double?
     let beaten: Bool
     let competingUnits: Int
+    // Sell orders only (19 Nov 2026): what's left is really worth.
+    let netLeft: Double?
+    let taxLeft: Double?
+    let salesTaxRate: Double?
+    let brokerRate: Double?
+    let brokerEstimated: Bool?
+    let listingFee: Double?
+    let relistFees: Double?
+    let relists: Int?
+    let feesPaid: Double?
+    let feesShare: Double?
+    let costEach: Double?
+    let costLeft: Double?
+    // Regional history (19 Nov 2026): the fair price and how fast it sells.
+    let fairPrice: Double?
+    let fairTrend: String?
+    let soldPerDay: Double?
+    let daysToSell: Double?
+    let otherBelowFair: Bool?
 
     var id: Int { orderId }
+    var netSort: Double { isBuy ? escrow : (netLeft ?? valueLeft) }
+    var fairSort: Double { fairPrice ?? 0 }
+    var soldSort: Double { soldPerDay ?? -1 }
+    /// Your price against the fair price: + = you're above it.
+    var vsFair: Double? {
+        guard let fairPrice, fairPrice > 0 else { return nil }
+        return price / fairPrice - 1
+    }
+    /// Signed gap: + when the best other price is above yours, − when below.
+    var signedGap: Double? {
+        guard let bestOther, price > 0 else { return nil }
+        return (bestOther - price) / price
+    }
     var place: String { station ?? "" }
     var bestOtherSort: Double { bestOther ?? 0 }
     var beatenSort: Int { beaten ? 1 : 0 }
@@ -46,6 +80,7 @@ struct MyOrder: Decodable, Identifiable {
 
 /// Your active buy and sell orders, and whether you've been undercut or outbid.
 struct MarketOrdersView: View {
+    @State private var highlight = RowHighlights()
     @Environment(AppState.self) private var appState
 
     private enum Side: String, CaseIterable { case sell = "Sell Orders", buy = "Buy Orders", results = "Results" }
@@ -134,7 +169,8 @@ struct MarketOrdersView: View {
 
     private func tiles(_ s: MyOrdersSummary) -> some View {
         HStack(spacing: 12) {
-            tile("Sell Orders", "\(s.sellCount)", detail: "\(s.sellValue.iskShort) listed")
+            tile("Sell Orders", "\(s.sellCount)",
+                 detail: "\(s.sellValue.iskShort) listed" + (s.sellNetValue.map { " · \($0.iskShort) net" } ?? ""))
             tile("Buy Orders", "\(s.buyCount)", detail: "\(s.escrow.iskShort) in escrow")
             tile(s.beatenCount == 0 ? "All Orders on Top" : "Undercut / Outbid",
                  "\(s.beatenCount)",
@@ -182,7 +218,7 @@ struct MarketOrdersView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
 
-                Table(r.orders.sorted(using: resultSort), sortOrder: $resultSort) {
+                Table(r.orders.sorted(using: resultSort), selection: highlight.row("t185"), sortOrder: $resultSort) {
                     TableColumn("Outcome", value: \.outcome) { o in
                         Text(o.outcome)
                             .foregroundStyle(o.outcome == "Filled" ? Color.green : (o.unitsTraded > 0 ? Color.primary : Color.orange))
@@ -243,17 +279,18 @@ struct MarketOrdersView: View {
     private var table: some View {
         let buy = side == .buy
         return Table(rows, selection: $selection, sortOrder: $sortOrder) {
-            TableColumn("Status", value: \.beatenSort) { o in
+            TableColumn("", value: \.beatenSort) { o in
                 if o.beaten {
-                    Label(buy ? "Outbid" : "Undercut", systemImage: "exclamationmark.triangle.fill")
+                    Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(Color.orange)
+                        .help(buy ? "Outbid – someone pays more" : "Undercut – someone sells cheaper")
                 } else {
-                    Label(o.bestOther == nil ? "Only order" : (buy ? "Highest" : "Cheapest"),
-                          systemImage: "checkmark.circle")
+                    Image(systemName: "checkmark.circle")
                         .foregroundStyle(Color.green)
+                        .help(o.bestOther == nil ? "Only order here" : (buy ? "Highest buy order" : "Cheapest sell order"))
                 }
             }
-            .width(min: 90, ideal: 105)
+            .width(22)
 
             TableColumn("Item", value: \.name) { o in
                 HStack(spacing: 6) {
@@ -271,38 +308,76 @@ struct MarketOrdersView: View {
             }
             .width(min: 120, ideal: 200)
 
-            TableColumn("Your Price", value: \.price) { o in
-                Text(o.price.isk).monospacedDigit().bold()
-                    .help("Exact: \(o.price.iskExact)")
+            TableColumn(buy ? "Yours / Highest Other" : "Yours / Lowest Other", value: \.price) { o in
+                HStack(spacing: 4) {
+                    Text(o.price.isk).bold()
+                    Text("/").foregroundStyle(.secondary)
+                    if let other = o.bestOther {
+                        Text(other.isk)
+                        if let gap = o.signedGap {
+                            Text("(\(gap >= 0 ? "+" : "−")\(String(format: "%.2f", abs(gap) * 100))%)")
+                                .foregroundStyle(o.beaten ? Color.orange : Color.green)
+                        }
+                        if o.otherBelowFair == true {
+                            Image(systemName: "arrow.down.circle")
+                                .foregroundStyle(Color.orange)
+                                .help("The cheapest other seller is well below the fair price – probably a one-off dump. It may be worth waiting rather than matching it.")
+                        }
+                    } else {
+                        Text("–").foregroundStyle(.secondary)
+                    }
+                }
+                .monospacedDigit()
+                .help("Yours: \(o.price.iskExact)" + (o.bestOther.map { "\nBest other: \($0.iskExact)" } ?? "")
+                      + "\n\(o.competingUnits.short) units on other \(buy ? "buy" : "sell") orders at this station")
             }
+            .width(min: 170, ideal: 210)
 
-            TableColumn(buy ? "Highest Other" : "Lowest Other", value: \.bestOtherSort) { o in
-                if let other = o.bestOther {
+            TableColumn("Fair Price", value: \.fairSort) { o in
+                if let fair = o.fairPrice {
                     HStack(spacing: 4) {
-                        Text(other.isk).monospacedDigit()
-                        if o.beaten, let gap = o.gapPercent {
-                            Text("(\(gap.percent))").foregroundStyle(Color.orange)
+                        Text(fair.isk)
+                        if o.fairTrend == "up" { Image(systemName: "arrow.up.right").foregroundStyle(.secondary) }
+                        if o.fairTrend == "down" { Image(systemName: "arrow.down.right").foregroundStyle(.secondary) }
+                        if let vs = o.vsFair {
+                            Text("(\(vs >= 0 ? "+" : "−")\(String(format: "%.0f", abs(vs) * 100))%)")
+                                .foregroundStyle(fairColour(vs, buy: buy))
                         }
                     }
-                    .help("Exact: \(other.iskExact)\n\(o.competingUnits.short) units on other \(buy ? "buy" : "sell") orders at this station")
+                    .monospacedDigit()
+                    .help("What it normally sells for in the region lately (the middle of recent sales; follows a real trend – the same green line as on the Market chart). The % is your price against it.\nExact: \(fair.iskExact)")
+                } else {
+                    Text("–").foregroundStyle(.secondary).help("No recent sales in the region to go by.")
+                }
+            }
+            .width(min: 110, ideal: 130)
+
+            TableColumn("Sold / Day", value: \.soldSort) { o in
+                if let sold = o.soldPerDay {
+                    Text(sold >= 10 ? sold.short : String(format: "%.1f", sold))
+                        .monospacedDigit()
+                        .help(soldHelp(o, sold))
                 } else {
                     Text("–").foregroundStyle(.secondary)
                 }
             }
+            .width(min: 60, ideal: 75)
 
             TableColumn("Remaining", value: \.volumeRemain) { o in
                 Text("\(o.volumeRemain.short) / \(o.volumeTotal.short)").monospacedDigit()
             }
             .width(min: 80, ideal: 100)
 
-            TableColumn(buy ? "Escrow" : "Value Left", value: \.valueLeft) { o in
-                Text((buy ? o.escrow : o.valueLeft).iskShort).monospacedDigit()
+            TableColumn(buy ? "Escrow" : "Net Left", value: \.netSort) { o in
+                if buy {
+                    Text(o.escrow.iskShort).monospacedDigit()
+                } else {
+                    let net = o.netLeft ?? o.valueLeft
+                    Text(net.iskShort).monospacedDigit()
+                        .foregroundStyle(net < 0 ? Color.red : Color.primary)
+                        .help(netHelp(o))
+                }
             }
-
-            TableColumn("Listed", value: \.issued) { o in
-                Text(o.issued, style: .relative).foregroundStyle(.secondary)
-            }
-            .width(min: 80, ideal: 100)
 
             TableColumn("Expires", value: \.expires) { o in
                 Text(o.expires.formatted(date: .abbreviated, time: .omitted))
@@ -326,6 +401,49 @@ struct MarketOrdersView: View {
                                        description: Text("You have no active \(buy ? "buy" : "sell") orders."))
             }
         }
+    }
+
+    /// Orange when your price is well above fair (sell) or well below it (buy) – it'll sit; green otherwise.
+    private func fairColour(_ vs: Double, buy: Bool) -> Color {
+        let off = buy ? -vs : vs
+        return off > 0.10 ? Color.orange : Color.green
+    }
+
+    private func soldHelp(_ o: MyOrder, _ sold: Double) -> String {
+        var text = "About \(sold >= 10 ? sold.short : String(format: "%.1f", sold)) sold per day in the region (whole market, every seller)."
+        if let days = o.daysToSell {
+            text += "\nYour \(o.volumeRemain.short) left is about \(days < 1 ? "less than a day" : String(format: "%.0f days", days)) of the region's sales – you share them with the other sellers, so expect longer."
+        }
+        return text
+    }
+
+    /// The sums behind Net Left.
+    private func netHelp(_ o: MyOrder) -> String {
+        var lines = ["\(o.volumeRemain.short) left × \(o.price.isk) = \(o.valueLeft.iskShort)"]
+        if let tax = o.taxLeft {
+            lines.append("− Sales tax \(tax.iskShort) (\((o.salesTaxRate ?? 0).percent))")
+        }
+        if let share = o.feesShare {
+            var fee = "− Broker fees \(share.iskShort)"
+            if let paid = o.feesPaid, o.volumeRemain < o.volumeTotal {
+                fee += " (share of \(paid.iskShort) paid on this order)"
+            }
+            lines.append(fee)
+            var detail = "    listing \((o.listingFee ?? 0).iskShort)"
+            if let relists = o.relists, relists > 0 {
+                detail += " + \(relists) price change\(relists == 1 ? "" : "s") \((o.relistFees ?? 0).iskShort)"
+            }
+            detail += " at \((o.brokerRate ?? 0).percent)\(o.brokerEstimated == true ? " (estimated – the structure owner sets it)" : "")"
+            lines.append(detail)
+        }
+        if let each = o.costEach {
+            lines.append("− What they cost you \((o.costLeft ?? 0).iskShort) (\(each.isk) each – built or bought)")
+        } else {
+            lines.append("− No ISK cost recorded (mined, looted or owned before the app's history)")
+        }
+        lines.append("= \((o.netLeft ?? o.valueLeft).iskShort)")
+        lines.append("Price changes are the ones the app saw while open.")
+        return lines.joined(separator: "\n")
     }
 
     // MARK: Loading

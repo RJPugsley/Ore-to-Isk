@@ -195,6 +195,13 @@ enum Market {
         }
     }
 
+    /// Price history for a type in any region (same cache as hubHistory).
+    static func regionHistory(_ regionID: Int, _ typeID: Int, days: Int = 30) async throws -> JSONDict {
+        try await cached("history:\(regionID):\(typeID):\(days)", ttl: 6 * 3600) {
+            await loadHistory(regionID, typeID, days)
+        }
+    }
+
     /// When the cached order book for this hub/type was fetched (epoch seconds), or nil.
     static func bookFetchedAt(_ hubName: String, _ typeID: Int) async throws -> Double? {
         let name = try await hub(hubName).string("name") ?? hubName
@@ -289,6 +296,20 @@ enum Market {
             totals[typeID, default: 0] += a.int("quantity") ?? 1
         }
         return totals
+    }
+
+    /// Everything you own except at `excluding`: {type: {station / structure: quantity}}.
+    static func ownedByLocation(excluding: Int?) async throws -> [Int: [Int: Int]] {
+        let byItem = try await ESI.getAssets().byItem
+        var result: [Int: [Int: Int]] = [:]
+        for a in byItem.values {
+            if ["Implant", "Skill", "SkillInTraining"].contains(a.string("location_flag") ?? "") { continue }
+            let root = rootLocation(a, byItem)
+            if let excluding, root == excluding { continue }
+            guard let typeID = a.int("type_id") else { continue }
+            result[typeID, default: [:]][root, default: 0] += a.int("quantity") ?? 1
+        }
+        return result
     }
 
     /// Stations / structures where you have assets, busiest first: [{location_id, name, items}].

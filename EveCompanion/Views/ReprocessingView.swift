@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Ore and ice sitting at your refinery: what it reprocesses into, and whether to reprocess or sell.
 struct ReprocessingView: View {
+    @State private var highlight = RowHighlights()
     @Environment(AppState.self) private var appState
 
     @AppStorage(BuildSettingsKey.refineryId) private var refineryId = 0
@@ -230,7 +231,7 @@ struct ReprocessingView: View {
     private func mineralTable(_ summary: ReproSummary) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Minerals From All Ore Combined").font(.headline)
-            Table(summary.minerals.sorted(using: mineralSort), sortOrder: $mineralSort) {
+            Table(summary.minerals.sorted(using: mineralSort), selection: highlight.row("t233"), sortOrder: $mineralSort) {
                 TableColumn("Mineral", value: \.name) { mineral in
                     HStack(spacing: 6) {
                         AsyncImage(url: PublicESIClient.typeIconURL(typeID: mineral.typeId, size: 32)) { image in
@@ -297,7 +298,7 @@ struct ReprocessingView: View {
                      color: ore.valueAsMinerals >= ore.valueAsOre ? .green : .orange)
             }
 
-            Table(ore.outputs.sorted(using: outputSort), sortOrder: $outputSort) {
+            Table(ore.outputs.sorted(using: outputSort), selection: highlight.row("t300"), sortOrder: $outputSort) {
                 TableColumn("Mineral", value: \.name) { mineral in
                     HStack(spacing: 6) {
                         AsyncImage(url: PublicESIClient.typeIconURL(typeID: mineral.typeId, size: 32)) { image in

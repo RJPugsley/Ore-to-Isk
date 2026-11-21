@@ -176,6 +176,7 @@ struct MarketFilteredNode: Identifiable {
 
 /// Sell › Market: browse the market like in game while you wait for a mining run or a job.
 struct MarketView: View {
+    @State private var highlight = RowHighlights()
     @Environment(AppState.self) private var appState
 
     @AppStorage("market.scope") private var scope = BuildSettingsKey.defaultHub
@@ -537,7 +538,7 @@ struct MarketView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Sellers · \(d.sellOrderCount) orders" + (d.sellOrderCount > d.sellOrders.count ? " (cheapest \(d.sellOrders.count) shown)" : ""))
                     .font(.headline)
-                Table(d.sellOrders.sorted(using: sellSort), sortOrder: $sellSort) {
+                Table(d.sellOrders.sorted(using: sellSort), selection: highlight.row("t540"), sortOrder: $sellSort) {
                     TableColumn("Price", value: \.price) { o in
                         Text(o.price.short).monospacedDigit().help("Exact: \(o.price.iskExact)")
                     }
@@ -561,7 +562,7 @@ struct MarketView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Buyers · \(d.buyOrderCount) orders" + (d.buyOrderCount > d.buyOrders.count ? " (best \(d.buyOrders.count) shown)" : ""))
                     .font(.headline)
-                Table(d.buyOrders.sorted(using: buySort), sortOrder: $buySort) {
+                Table(d.buyOrders.sorted(using: buySort), selection: highlight.row("t564"), sortOrder: $buySort) {
                     TableColumn("Price", value: \.price) { o in
                         Text(o.price.short).monospacedDigit().help("Exact: \(o.price.iskExact)")
                     }

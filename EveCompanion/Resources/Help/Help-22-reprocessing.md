@@ -1,16 +1,16 @@
 ---
 id: reprocessing
-title: Reprocessing
+title: Ore Reprocessing
 section: Mine
 also: Build
 order: 30
 icon: arrow.3.trianglepath
 page: reprocessing
-keywords: reprocess, refine, refining, refinery, ore value, minerals value, sell ore, sell minerals, yield, refinery tax, too small, portion, best, compressed ore, ice
-related: build-settings, ore-database, walk-reprocess-or-sell, price-checks
+keywords: ore reprocessing, reprocess, refine, refining, refinery, ore value, minerals value, sell ore, sell minerals, yield, refinery tax, too small, portion, best, compressed ore, ice
+related: build-settings, ore-database, reprocess-or-sell, walk-reprocess-or-sell, price-checks
 summary: For the ore sitting at your refinery, is it worth more as ore or as minerals?
 ---
-This page looks at the ore and ice you have at your refinery. For each stack, it compares **selling it as it is** with **reprocessing it and selling the minerals**.
+This page looks at the ore and ice you have at your refinery. Everything else you own – loot, modules, packaged ships, empty containers – is on [Reprocess or Sell](help:reprocess-or-sell). For each stack of ore, this page compares **selling it as it is** with **reprocessing it and selling the minerals**.
 
 First pick your refinery in [Build settings](help:build-settings). If you haven't, the page shows **Choose Your Refinery**.
 

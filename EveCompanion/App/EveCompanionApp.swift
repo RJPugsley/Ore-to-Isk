@@ -98,7 +98,7 @@ struct EveCompanionApp: App {
         }
         .defaultSize(width: 980, height: 720)
 
-        // About window: name, version (v1.0 beta), data folder, CCP notice.
+        // About window: name, version (v1.4 beta), data folder, CCP notice.
         Window("About \(AppInfo.name)", id: AboutView.id) {
             AboutView()
         }

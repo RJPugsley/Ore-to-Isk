@@ -92,6 +92,9 @@ actor HistoryStore {
     CREATE INDEX IF NOT EXISTS trips_character ON trips(character_id, ended);
     CREATE TABLE IF NOT EXISTS travel_state (
         character_id INTEGER PRIMARY KEY, last_dock INTEGER, undocked INTEGER, undocked_at REAL);
+    CREATE TABLE IF NOT EXISTS stock_baseline_meta (character_id INTEGER PRIMARY KEY, taken_at TEXT);
+    CREATE TABLE IF NOT EXISTS stock_baseline (
+        character_id INTEGER, type_id INTEGER, quantity INTEGER, PRIMARY KEY (character_id, type_id));
     """
 
     private var db: SQLiteDB?
@@ -103,6 +106,7 @@ actor HistoryStore {
     // MARK: - Database
 
     private func open() throws -> SQLiteDB {
+        PageMemo.deps?.usedHistory()
         if let db { return db }
         try FileManager.default.createDirectory(at: SDE.dataDir, withIntermediateDirectories: true)
         let database = try SQLiteDB(path: Self.path.path(percentEncoded: false), readOnly: false)
@@ -386,6 +390,29 @@ actor HistoryStore {
 
     /// Player structures the app has learned about (where you were docked, or a lookup that worked) – kept,
     /// so a structure EVE won't describe again still has its name and system.
+    // MARK: - Stock baseline (19 Nov 2026): everything you owned when origin tracking began
+    // counts as "already had"; only what turns up after it can be "other source" (loot, salvage…).
+
+    func stockBaseline(_ characterID: Int) -> (takenAt: String, quantities: [Int: Int])? {
+        guard let meta = (try? open().query("SELECT taken_at FROM stock_baseline_meta WHERE character_id = ?", [characterID]))?.first,
+              let takenAt = meta.string("taken_at") else { return nil }
+        var quantities: [Int: Int] = [:]
+        for row in (try? open().query("SELECT type_id, quantity FROM stock_baseline WHERE character_id = ?", [characterID])) ?? [] {
+            if let type = row.int("type_id") { quantities[type] = row.int("quantity") ?? 0 }
+        }
+        return (takenAt, quantities)
+    }
+
+    func saveStockBaseline(_ characterID: Int, _ quantities: [Int: Int], takenAt: String) {
+        try? transaction { db in
+            try db.run("DELETE FROM stock_baseline WHERE character_id = ?", [characterID])
+            for (type, qty) in quantities where qty > 0 {
+                try db.run("INSERT INTO stock_baseline VALUES (?,?,?)", [characterID, type, qty])
+            }
+            try db.run("INSERT OR REPLACE INTO stock_baseline_meta VALUES (?,?)", [characterID, takenAt])
+        }
+    }
+
     func structureRow(_ id: Int) -> JSONDict? {
         (try? open().query("SELECT structure_id, name, system_id, type_id FROM structure_places WHERE structure_id = ?", [id]))?.first
     }
@@ -437,10 +464,12 @@ actor HistoryStore {
         guard let cid = try? await EveAuth.shared.characterID() else { return }
         if !force, let last = lastSync[cid], Date().timeIntervalSince(last) < 300 { return }
 
-        let task = Task { await self.performSync(cid) }
+        // Not part of whichever page started it (its EVE reads mustn't stop that page being kept).
+        let task = Task { await PageMemo.$deps.withValue(nil) { await self.performSync(cid) } }
         running = task
         await task.value
         running = nil
+        PageMemo.historyChanged()
         lastSync[cid] = Date()
     }
 

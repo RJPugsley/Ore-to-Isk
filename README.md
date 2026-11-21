@@ -3,7 +3,7 @@
 A free macOS companion for **EVE Online** that follows the whole industrial loop:
 **mine → refine → build → sell → haul** – and shows what actually pays before you undock.
 
-> **v1.0 beta.** Free and open source (MIT). Fan-made; not affiliated with or endorsed by CCP hf.
+> **v1.4 beta.** Free and open source (MIT). Fan-made; not affiliated with or endorsed by CCP hf.
 
 ## What it does
 
@@ -21,7 +21,7 @@ and a built-in, searchable Help (⌘?).
 
 ## Install
 
-1. Download **EVE-Ore-to-ISK-1.0-beta.dmg** from [Releases](../../releases).
+1. Download **EVE-Ore-to-ISK-1.4-beta.dmg** from [Releases](../../releases).
 2. Open it and drag **EVE Ore to ISK** into **Applications**.
 3. The beta isn't notarised by Apple yet, so the first launch is blocked once:
    open the app, click **Done**, then go to **System Settings → Privacy & Security**,

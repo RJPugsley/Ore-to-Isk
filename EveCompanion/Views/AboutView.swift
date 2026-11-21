@@ -8,7 +8,7 @@ enum AppInfo {
 
     static var version: String {
         let info = Bundle.main.infoDictionary
-        let short = info?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let short = info?["CFBundleShortVersionString"] as? String ?? "1.4"
         let build = info?["CFBundleVersion"] as? String ?? "1"
         return "Version \(short) \(stage) (build \(build))"
     }

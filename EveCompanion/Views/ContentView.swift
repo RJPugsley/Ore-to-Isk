@@ -9,6 +9,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
     case skillQueue
     case manufacturing
     case reprocessing
+    case reprocessOrSell
     case oreDatabase
     case buildVsSell
     case blueprints
@@ -32,7 +33,8 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
         case .marketOrders: "Market Orders"
         case .skillQueue: "Skill Queue"
         case .manufacturing: "Manufacturing"
-        case .reprocessing: "Reprocessing"
+        case .reprocessing: "Ore Reprocessing"
+        case .reprocessOrSell: "Reprocess or Sell"
         case .oreDatabase: "Ore Database"
         case .buildVsSell: "Build vs Sell"
         case .blueprints: "Blueprints"
@@ -57,6 +59,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
         case .skillQueue: "list.number"
         case .manufacturing: "hammer"
         case .reprocessing: "arrow.3.trianglepath"
+        case .reprocessOrSell: "arrow.triangle.branch"
         case .oreDatabase: "cube.transparent"
         case .buildVsSell: "scalemass"
         case .blueprints: "doc.text"
@@ -119,9 +122,9 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
     var pages: [SidebarItem] {
         switch self {
         case .pilot: [.dashboard, .skills, .finances]
-        case .mine: [.miningLedger, .buildPlanner, .reprocessing, .oreDatabase]
+        case .mine: [.miningLedger, .buildPlanner, .reprocessing, .reprocessOrSell, .oreDatabase]
         case .build: [.manufacturing, .blueprints, .blueprintCopying, .industryJobs, .buildVsSell, .blueprintPayback, .buildPlanner, .reprocessing]
-        case .sell: [.market, .marketOrders, .buildVsSell, .blueprintCopying, .finances]
+        case .sell: [.market, .marketOrders, .reprocessOrSell, .buildVsSell, .blueprintCopying, .finances]
         case .haul: [.haulPlanner, .haulRoute, .haulWatch]
         }
     }
@@ -251,6 +254,8 @@ struct ContentView: View {
             RequiresCharacter { ManufacturingView() }
         case .reprocessing:
             RequiresCharacter { ReprocessingView() }
+        case .reprocessOrSell:
+            RequiresCharacter { ReprocessOrSellView() }
         case .oreDatabase:
             RequiresCharacter { OreDatabaseView() }
         case .buildVsSell:

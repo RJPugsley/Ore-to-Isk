@@ -3,6 +3,7 @@ import SwiftUI
 /// Pick what you want to build → the mix of ore with the fewest m³ that covers the minerals,
 /// after what you already have (stock + ore waiting at the refinery), using your real yields.
 struct BuildPlannerView: View {
+    @State private var highlight = RowHighlights()
     @Environment(AppState.self) private var appState
 
     @AppStorage("buildPlanner.items") private var itemsText = ""
@@ -38,10 +39,16 @@ struct BuildPlannerView: View {
     @AppStorage("buildPlanner.subtractStock") private var subtractStock = true
     /// Build components yourself: break them down into their own materials (and ore).
     @AppStorage("buildPlanner.breakDown") private var breakDown = true
+    /// Count stock at other stations too (listed so you can fetch it).
+    @AppStorage("buildPlanner.useElsewhere") private var useElsewhere = true
 
     @AppStorage(BuildSettingsKey.structure) private var structure = StructureKind.npc.rawValue
     @AppStorage(BuildSettingsKey.rigME) private var rigME = 0.0
     @AppStorage(BuildSettingsKey.materialHub) private var materialHub = BuildSettingsKey.defaultHub
+    @AppStorage(BuildSettingsKey.systemId) private var systemId = BuildSettingsKey.defaultSystemId
+    @AppStorage(BuildSettingsKey.facilityTax) private var facilityTax = 0.25
+    /// Same sell hub as Build vs Sell, so both pages agree on the profit.
+    @AppStorage("buildVsSell.sellHub") private var sellHub = "best"
     @AppStorage(BuildSettingsKey.stockLocationId) private var stockLocationId = 0
     @AppStorage(BuildSettingsKey.stockLocationName) private var stockLocationName = ""
     @AppStorage(BuildSettingsKey.refineryId) private var refineryId = 0
@@ -130,12 +137,14 @@ struct BuildPlannerView: View {
     private struct PlanKey: Hashable {
         var items: String, spaces: String, subtract: Bool, breakDown: Bool, structure: String, rigME: Double
         var stock: Int, refinery: Int, useOre: Bool, oreYield: Double, oreSkill: String, iceYield: Double, tax: Double
+        var system: Int, facilityTax: Double, sellHub: String, hub: String, elsewhere: Bool
     }
 
     private var planKey: PlanKey {
         PlanKey(items: itemsText, spaces: spaces, subtract: subtractStock, breakDown: breakDown, structure: structure, rigME: rigME,
                 stock: stockLocationId, refinery: refineryId, useOre: useOre, oreYield: oreYield,
-                oreSkill: oreYieldSkill, iceYield: iceYield, tax: refineryTax)
+                oreSkill: oreYieldSkill, iceYield: iceYield, tax: refineryTax,
+                system: systemId, facilityTax: facilityTax, sellHub: sellHub, hub: materialHub, elsewhere: useElsewhere)
     }
 
     var body: some View {
@@ -184,6 +193,7 @@ struct BuildPlannerView: View {
                         .font(.callout)
                 }
                 ForEach(lines) { line in
+                    VStack(alignment: .leading, spacing: 2) {
                     HStack {
                         Text(names[line.blueprintTypeID] ?? plan?.items.first { $0.blueprintTypeId == line.blueprintTypeID }?.productName ?? "Blueprint \(line.blueprintTypeID)")
                             .lineLimit(1)
@@ -204,6 +214,8 @@ struct BuildPlannerView: View {
                         }
                         .buttonStyle(.borderless)
                         .help("Remove")
+                    }
+                    itemMoneyLine(line.blueprintTypeID)
                     }
                     .contextMenu {
                         let name = lineName(line)
@@ -236,6 +248,12 @@ struct BuildPlannerView: View {
                     .help(stockLocationName.isEmpty
                           ? "Minerals you own anywhere, plus ore at your refinery"
                           : "Minerals at \(stockLocationName), plus ore at your refinery")
+                Toggle("Use stock at other stations", isOn: $useElsewhere)
+                    .disabled(!subtractStock || stockLocationId <= 0)
+                    .padding(.leading, 16)
+                    .help(stockLocationId <= 0
+                          ? "No Stock location is set in Build settings, so everything you own already counts."
+                          : "Also count what you own at stations other than \(stockLocationName). It's listed under \"Fetch from Other Stations\" so you know to haul it before you build.")
             }
 
             Section("Add") {
@@ -319,19 +337,14 @@ struct BuildPlannerView: View {
         } else if let plan {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    HStack(spacing: 12) {
-                        tile("Ore to Mine", "\(Int(plan.totalM3.rounded()).short) m³",
-                             detail: "fewest m³ that covers it (as Standard ore)")
-                        tile("Units", plan.totalUnits.short, detail: "\(plan.ores.count) kinds of ore · fewer if graded")
-                        tile("Building", "\(plan.items.reduce(0) { $0 + $1.units }.short) items",
-                             detail: plan.items.map { "\($0.units)× \($0.productName)" }.joined(separator: ", "))
-                        if let minerals = plan.mineralsTotal, minerals > 0 {
-                            tile("Minerals to Mine Are Worth", "≈ \(minerals.short)",
-                                 detail: "at \(plan.priceHub ?? "the hub") buy orders")
-                        }
-                        if let buy = plan.buyTotal, buy > 0 {
-                            tile("Everything Else Costs", "≈ \(buy.short)",
-                                 detail: "at \(plan.priceHub ?? "the hub") sell orders – see below")
+                    VStack(spacing: 12) {
+                        moneyTiles(plan)
+                        HStack(spacing: 12) {
+                            tile("Ore to Mine", "\(Int(plan.totalM3.rounded()).short) m³",
+                                 detail: "fewest m³ that covers it (as Standard ore)")
+                            tile("Units", plan.totalUnits.short, detail: "\(plan.ores.count) kinds of ore · fewer if graded")
+                            tile("Building", "\(plan.items.reduce(0) { $0 + $1.units }.short) items",
+                                 detail: plan.items.map { "\($0.units)× \($0.productName)" }.joined(separator: ", "))
                         }
                     }
                     .overlay(alignment: .topTrailing) {
@@ -350,7 +363,7 @@ struct BuildPlannerView: View {
                                  : "You already have every mineral you need – nothing to mine.")
                                 .foregroundStyle(.secondary)
                         } else {
-                            Table(plan.ores.sorted(using: oreSort), sortOrder: $oreSort) {
+                            Table(plan.ores.sorted(using: oreSort), selection: highlight.row("t353"), sortOrder: $oreSort) {
                                 TableColumn("Ore", value: \.family) { ore in
                                     HStack(spacing: 6) {
                                         AsyncImage(url: PublicESIClient.typeIconURL(typeID: ore.typeId, size: 32)) { image in
@@ -402,7 +415,7 @@ struct BuildPlannerView: View {
 
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Minerals").font(.headline)
-                        Table(plan.minerals) {
+                        Table(plan.minerals, selection: highlight.row("t405")) {
                             TableColumn("Mineral") { m in
                                 HStack(spacing: 6) {
                                     AsyncImage(url: PublicESIClient.typeIconURL(typeID: m.typeId, size: 32)) { image in
@@ -438,12 +451,34 @@ struct BuildPlannerView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
 
+                    if let away = plan.fromElsewhere, !away.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Fetch from Other Stations").font(.headline)
+                            Text("You already own these, but not at \(stockLocationName.isEmpty ? "your Stock location" : stockLocationName). The plan counts them – haul them over before you build.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Table(away, selection: highlight.row("elsewhere")) {
+                                TableColumn("Item") { row in
+                                    Text(row.name)
+                                        .contextMenu { ItemMenu(typeID: row.typeId, name: row.name) }
+                                }
+                                TableColumn("Quantity") { row in Text(row.quantity.formatted()).monospacedDigit() }
+                                    .width(min: 70, ideal: 90)
+                                TableColumn("Where") { row in
+                                    Text(row.location)
+                                        .contextMenu { PlaceMenu(locationID: row.locationId, name: row.location) }
+                                }
+                            }
+                            .frame(height: CGFloat(away.count) * 26 + 30)
+                            .scrollDisabled(true)
+                        }
+                    }
+
                     if let parts = plan.buildFirst, !parts.isEmpty {
                         let owned = plan.ownedComponentBlueprints ?? parts.filter(\.owned).count
                         DisclosureGroup(isExpanded: $showBuildFirst) {
                             Text("Built from the minerals above and the items below – their materials are already in the plan.")
                                 .font(.caption).foregroundStyle(.secondary)
-                            Table(parts.sorted(using: buildSort), sortOrder: $buildSort) {
+                            Table(parts.sorted(using: buildSort), selection: highlight.row("t446"), sortOrder: $buildSort) {
                                 TableColumn("Component", value: \.name) { Text($0.name) }
                                     .width(min: 160, ideal: 240)
                                 TableColumn("Blueprint", value: \.ownedSort) { part in
@@ -480,7 +515,7 @@ struct BuildPlannerView: View {
                                 get: { openSources.contains(source) },
                                 set: { open in if open { openSources.insert(source) } else { openSources.remove(source) } }
                             )) {
-                                Table(rows.sorted(using: buySort), sortOrder: $buySort) {
+                                Table(rows.sorted(using: buySort), selection: highlight.row("t483"), sortOrder: $buySort) {
                                     TableColumn("Item", value: \.name) { Text($0.name) }
                                         .width(min: 160, ideal: 240)
                                     TableColumn("Needed", value: \.needed) { Text($0.needed.short).monospacedDigit() }
@@ -534,6 +569,125 @@ struct BuildPlannerView: View {
         }
     }
 
+    // MARK: Money
+
+    private static func percent(_ value: Double) -> String {
+        String(format: "%+.1f%%", value * 100)
+    }
+
+    private static func signed(_ value: Double) -> String {
+        (value >= 0 ? "+" : "−") + abs(value).short
+    }
+
+    private func sellPlace(_ money: PlanMoney) -> String {
+        let hubs = Set((money.items ?? []).compactMap(\.sellHub))
+        if hubs.count == 1, let only = hubs.first { return only }
+        return "the best of the five hubs"
+    }
+
+    /// Total Cost · Sells For · Profit – the same sums as Build vs Sell.
+    @ViewBuilder
+    private func moneyTiles(_ plan: BuildPlan) -> some View {
+        if let money = plan.economics, let cost = money.cost {
+            HStack(spacing: 12) {
+                tile("Total Cost", "≈ \(cost.short)", detail: costDetail(money))
+                    .help(originNote(plan) + "Minerals (mined or from stock) at what they'd sell for in \(plan.priceHub ?? "the hub")'s buy orders after tax – the same as Build vs Sell. Everything else at its cheapest sell order. \(breakDown ? "Components are built: their own materials plus their job fees." : "Components are bought.")")
+                if let sells = money.sellsFor {
+                    tile("Sells For", "≈ \(sells.short)", detail: "at \(sellPlace(money)), after sales tax and broker fee")
+                        .help("Price-checked against recent sales, like Build vs Sell. The sell hub is the one chosen on Build vs Sell.")
+                } else {
+                    tile("Sells For", "–", detail: "\(money.unsoldCount ?? 0) item(s) have no sell orders to price")
+                }
+                profitTile(money)
+            }
+        }
+    }
+
+    /// When stock-origin tracking began – stock owned then counts as "already had".
+    private func originNote(_ plan: BuildPlan) -> String {
+        if plan.originStartedNow == true {
+            return "Stock tracking started just now: everything you own today counts as \"already had\". From now on, things that turn up without being bought, mined or built count as \"looted / other\". "
+        }
+        if let since = plan.originSince, let date = ISO8601DateFormatter().date(from: since) {
+            return "Stock tracked since \(date.formatted(date: .abbreviated, time: .omitted)) – what you owned then counts as \"already had\"; anything that turned up since without being bought, mined or built counts as \"looted / other\". "
+        }
+        return ""
+    }
+
+    /// "Minerals · Bought · Job fees", then where the stock minerals came from.
+    private func costDetail(_ money: PlanMoney) -> String {
+        var text = "Minerals \((money.costMinerals ?? 0).short) · Bought \((money.costBought ?? 0).short) · Job fees \((money.costFees ?? 0).short)"
+        let boughtValue = money.stockBoughtValue ?? 0
+        let freeValue = money.stockFreeValue ?? 0
+        if boughtValue + freeValue >= 1 {
+            var parts: [String] = []
+            if boughtValue >= 1 { parts.append("\(boughtValue.short) bought or built (cost you \((money.stockPaid ?? 0).short))") }
+            let mined = money.stockMinedValue ?? 0
+            let other = money.stockOtherValue ?? 0
+            let had = money.stockHadValue ?? 0
+            if mined + other + had >= 1 {
+                if mined >= 1 { parts.append("\(mined.short) mined") }
+                if other >= 1 { parts.append("\(other.short) looted / other") }
+                if had >= 1 { parts.append("\(had.short) already had") }
+            } else if freeValue >= 1 {
+                parts.append("\(freeValue.short) mined, looted or had")
+            }
+            text += "\nFrom stock: " + parts.joined(separator: " · ")
+        }
+        return text
+    }
+
+    @ViewBuilder
+    private func profitTile(_ money: PlanMoney) -> some View {
+        let profit = money.profit
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Profit").font(.caption).foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(profit.map { Self.signed($0) } ?? "–")
+                    .font(.title2).bold().monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                if let pct = money.profitPercent {
+                    Text(Self.percent(pct)).font(.callout).monospacedDigit()
+                }
+            }
+            .foregroundStyle(profit.map { $0 >= 0 ? Color.green : Color.red } ?? Color.secondary)
+            if let cash = money.cashProfit {
+                Text("Cash profit: \(Self.signed(cash))")
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .help("Only the ISK you actually spend: what you still have to buy, the job fees, and stock at what it cost you (bought at what you paid, built at what the build cost). Minerals you mine, and stock you mined, looted or already had, count as free. The Profit above values every mineral at what you could sell it for instead – that's the one that tells you whether building beats selling the minerals.")
+            }
+            if let saves = money.buildingComponentsSaves, abs(saves) >= 1 {
+                Text(saves >= 0 ? "Building the components yourself saves \(saves.short)"
+                                : "Buying the components would save \(abs(saves).short)")
+                    .font(.caption).foregroundStyle(saves >= 0 ? Color.secondary : Color.orange).lineLimit(1)
+                    .help("Compares building every component yourself with buying them at the hub – whichever way \"Build components myself\" is set.")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// Small line under each item on the left: cost · sells for · profit.
+    @ViewBuilder
+    private func itemMoneyLine(_ blueprintTypeID: Int) -> some View {
+        if let m = plan?.economics?.items?.first(where: { $0.blueprintTypeId == blueprintTypeID }), let cost = m.cost {
+            HStack(spacing: 4) {
+                Text("Cost \(cost.short)")
+                if let sells = m.sellsFor { Text("· Sells \(sells.short)") }
+                if let profit = m.profit {
+                    Text("· \(Self.signed(profit))\(m.profitPercent.map { " (\(Self.percent($0)))" } ?? "")")
+                        .foregroundStyle(profit >= 0 ? Color.green : Color.red)
+                } else {
+                    Text("· no sell price")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
+            .lineLimit(1)
+        }
+    }
+
     private func tile(_ title: String, _ value: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.caption).foregroundStyle(.secondary)
@@ -565,6 +719,10 @@ struct BuildPlannerView: View {
             URLQueryItem(name: "break_down", value: breakDown ? "true" : "false"),
             URLQueryItem(name: "spaces", value: spaces),
             URLQueryItem(name: "hub", value: materialHub),
+            URLQueryItem(name: "system_id", value: String(systemId)),
+            URLQueryItem(name: "facility_tax", value: String(facilityTax)),
+            URLQueryItem(name: "sell_hub", value: sellHub),
+            URLQueryItem(name: "use_elsewhere", value: useElsewhere ? "true" : "false"),
         ]
         if stockLocationId > 0 {
             query.append(URLQueryItem(name: "stock_location", value: String(stockLocationId)))

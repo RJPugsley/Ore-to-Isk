@@ -58,7 +58,21 @@ enum NativeBackend {
         let route = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let query = Query(queryItems)
         do {
-            return try JSON.data(try await respond(method: method, route: route, query: query, body: body))
+            guard method == "GET" else {
+                await PageMemoStore.shared.clear()   // something changed – recalculate pages
+                return try JSON.data(try await respond(method: method, route: route, query: query, body: body))
+            }
+            // A page you've just been on: reuse its result if nothing behind it has been updated.
+            let memoKey = PageMemo.key(path: route, query: queryItems)
+            if !PageMemo.bypasses(queryItems), let kept = await PageMemoStore.shared.reusable(memoKey) {
+                return kept
+            }
+            let deps = PageDeps()
+            let data = try await PageMemo.$deps.withValue(deps) {
+                try JSON.data(try await respond(method: method, route: route, query: query, body: body))
+            }
+            await PageMemoStore.shared.keep(memoKey, data, deps)
+            return data
         } catch let error as RouteError {
             throw BackendError.http(error.status, error.detail)
         } catch let error as DowntimeError {
@@ -603,6 +617,40 @@ enum NativeBackend {
                                                price: query.string("price", "buy"))
             }
 
+        case ("GET", "reprocess-or-sell/summary"):
+            try await requireSDE()
+            let settings = try refinerySettings(query)
+            let locationID = try query.int("location_id", 0)
+            let refineryID = try query.int("refinery_id", 0)
+            let at = query.string("at", "here")
+            let sellHub = query.string("sell_hub", "Jita")
+            let price = query.string("price", "buy")
+            return try await permissionAware("Missing assets permission – log in again to grant it.") {
+                try await ReprocessOrSell.summary(locationID: locationID, at: at, sellHub: sellHub, price: price,
+                                                  refineryID: refineryID, settings: settings)
+            }
+
+        case ("GET", "reprocess-or-sell/item"):
+            try await requireSDE()
+            let settings = try refinerySettings(query)
+            var typeID = try query.int("type_id", 0)
+            if typeID == 0, let found = try ReprocessOrSell.typeID(named: query.string("name", "")) { typeID = found }
+            guard typeID != 0 else { throw RouteError(status: 404, detail: "No item by that name reprocesses into anything.") }
+            let quantity = try query.int("quantity", 1)
+            let locationID = try query.int("location_id", 0)
+            let refineryID = try query.int("refinery_id", 0)
+            let at = query.string("at", "here")
+            let sellHub = query.string("sell_hub", "Jita")
+            let price = query.string("price", "buy")
+            return try await wrap {
+                try await ReprocessOrSell.item(typeID: typeID, quantity: quantity, locationID: locationID, at: at,
+                                               sellHub: sellHub, price: price, refineryID: refineryID, settings: settings)
+            }
+
+        case ("GET", "reprocess-or-sell/suggest"):
+            try await requireSDE()
+            return try ReprocessOrSell.suggest(query.string("q", ""))
+
         case ("GET", "market/hubs"):
             return try await wrap { try await Market.hubs() }
 
@@ -624,11 +672,16 @@ enum NativeBackend {
             if bands.isEmpty { bands = try query.bool("highsec_only", true) ? ["High"] : ["High", "Low", "Null"] }
             let settings = try refinerySettings(query)
             let breakDown = try query.bool("break_down", true)
+            let systemID = try query.optionalInt("system_id")
+            let facilityTax = try query.optionalDouble("facility_tax")
+            let useElsewhere = try query.bool("use_elsewhere", true)
             return try await wrap {
                 try await Mining.buildPlan(items: items, structure: query.string("structure", "npc"), rigME: rigME,
                                       subtractStock: subtract, stockLocation: stock == 0 ? nil : stock,
                                       refineryLocation: refinery == 0 ? nil : refinery, settings: settings,
-                                      bands: bands, hub: query.string("hub", "Jita"), breakDown: breakDown)
+                                      bands: bands, hub: query.string("hub", "Jita"), breakDown: breakDown,
+                                      systemID: systemID, facilityTax: facilityTax,
+                                      sellHub: query.string("sell_hub", "best"), useElsewhere: useElsewhere)
             }
 
         // ---------------- History ----------------
@@ -636,6 +689,7 @@ enum NativeBackend {
         case ("GET", "history/sync"):
             let force = try query.bool("force", false)
             await HistoryStore.shared.sync(force: force)
+            await StockOrigin.ensureBaseline()   // stock-origin tracking starts on the first sync
             let errors = await HistoryStore.shared.lastErrors
             return ["errors": errors]
 
@@ -690,6 +744,7 @@ extension NativeBackend {
     static func resetCaches() async {
         await ESIState.shared.reset()
         await TTLCache.shared.removeAll()
+        await PageMemoStore.shared.clear()
     }
 
     /// What main.py's lifespan did on start-up: refresh CCP static data in the background.

@@ -344,6 +344,7 @@ final class AppState {
 
         lastError = nil
         connection = .checking
+        await PageMemoStore.shared.clear()   // Refresh: every page recalculates
 
         do {
             try await backend.health()

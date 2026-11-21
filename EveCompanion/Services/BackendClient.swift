@@ -127,6 +127,18 @@ struct BackendClient {
         try await get("reprocessing/summary", query: query, as: ReproSummary.self)
     }
 
+    func reprocessOrSell(_ query: [URLQueryItem]) async throws -> ROSSummary {
+        try await get("reprocess-or-sell/summary", query: query, as: ROSSummary.self)
+    }
+
+    func reprocessOrSellItem(_ query: [URLQueryItem]) async throws -> ROSItem {
+        try await get("reprocess-or-sell/item", query: query, as: ROSItem.self)
+    }
+
+    func suggestReprocessable(_ text: String) async -> [String] {
+        (try? await get("reprocess-or-sell/suggest", query: [URLQueryItem(name: "q", value: text)], as: [String].self)) ?? []
+    }
+
     func calculate(_ query: [URLQueryItem]) async throws -> CalcResult {
         try await get("industry/calculate", query: query, as: CalcResult.self)
     }

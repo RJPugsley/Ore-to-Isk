@@ -15,6 +15,27 @@ enum HistoryReports {
     /// - A sale takes built items at their average cost; sales tax + broker fee use today's skills and standings at your trade hub.
     /// ESI doesn't say which units a job used, so this is an estimate from purchases and jobs.
     static func trackRecord(days: Int = HistoryRange.days) async throws -> [Int: JSONDict] {
+        try await trackRecordAndPools(days: days).records
+    }
+
+    /// What's left in the stock pool now: units you bought (or built) and still have, with what
+    /// they cost you (average cost). Mined / looted / older stock isn't in it – that's the free part.
+    /// Used by the Build Planner's cash cost (19 Nov 2026).
+    /// `oreAsMinerals`: bought ore counts as the minerals it refines into (your yield), with
+    /// what you paid split across them by value – so refined bought ore shows as "bought".
+    static func boughtStock(oreAsMinerals: [Int: [OreShare]] = [:]) async throws -> [Int: (qty: Double, cost: Double)] {
+        try await trackRecordAndPools(days: 0, oreAsMinerals: oreAsMinerals).pools
+    }
+
+    /// One mineral from one unit of ore: how many units, and its share of the ore's value.
+    struct OreShare {
+        let mineral: Int
+        let perUnit: Double
+        let share: Double
+    }
+
+    static func trackRecordAndPools(days: Int, oreAsMinerals: [Int: [OreShare]] = [:]) async throws
+        -> (records: [Int: JSONDict], pools: [Int: (qty: Double, cost: Double)]) {
         let cid = try await EveAuth.shared.characterID()
         let store = HistoryStore.shared
         let since = HistoryRange.since(days).map(ISODate.string)
@@ -82,6 +103,17 @@ enum HistoryReports {
             case .buy:
                 let type = r.int("type_id") ?? 0
                 let qty = Double(r.int("quantity") ?? 0)
+                if let shares = oreAsMinerals[type] {
+                    // Bought ore → the minerals it refines into, each with its share of the price.
+                    let paid = qty * (r.double("unit_price") ?? 0)
+                    for share in shares {
+                        var pool = pools[share.mineral] ?? (0, 0)
+                        pool.qty += qty * share.perUnit
+                        pool.cost += paid * share.share
+                        pools[share.mineral] = pool
+                    }
+                    continue
+                }
                 var pool = pools[type] ?? (0, 0)
                 pool.qty += qty
                 pool.cost += qty * (r.double("unit_price") ?? 0)
@@ -202,7 +234,7 @@ enum HistoryReports {
                 "range_label": HistoryRange.label(days),
             ]
         }
-        return result
+        return (result, pools)
     }
 
     // MARK: - Finished market orders

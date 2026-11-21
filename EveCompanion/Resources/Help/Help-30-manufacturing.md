@@ -13,7 +13,7 @@ summary: Pick one blueprint and see exactly what building it costs and earns at 
 
 The list on the left shows **My Blueprints**. The search box finds **anything that can be manufactured**, even if you don't own the blueprint. In that case the page says **You don't own this blueprint** and uses a typical ME/TE.
 
-Set the **Runs** at the top. **ME** and **TE** come from your blueprint.
+Set the **Runs** at the top. For a blueprint copy you own, Runs starts at all the runs the copy has left and can't go above that; for an original it starts at 1. **ME** and **TE** come from your blueprint.
 
 ## Tiles
 

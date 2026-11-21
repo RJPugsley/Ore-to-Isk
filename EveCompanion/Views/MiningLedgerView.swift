@@ -3,6 +3,7 @@ import SwiftUI
 
 /// What you mined over the history range: totals, a chart by day / week / month, by ore and by system.
 struct MiningLedgerView: View {
+    @State private var highlight = RowHighlights()
     @Environment(AppState.self) private var appState
     @AppStorage(HistoryRange.key) private var rangeDays = HistoryRange.defaultDays
     @AppStorage(BuildSettingsKey.materialHub) private var materialHub = BuildSettingsKey.defaultHub
@@ -86,7 +87,7 @@ struct MiningLedgerView: View {
                 HStack(alignment: .top, spacing: 16) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("By Ore").font(.headline)
-                        Table(l.byOre.sorted(using: oreSort), sortOrder: $oreSort) {
+                        Table(l.byOre.sorted(using: oreSort), selection: highlight.row("t89"), sortOrder: $oreSort) {
                             TableColumn("Ore", value: \.name) { ore in
                                 HStack(spacing: 6) {
                                     AsyncImage(url: PublicESIClient.typeIconURL(typeID: ore.typeId, size: 32)) { image in
@@ -114,7 +115,7 @@ struct MiningLedgerView: View {
                     }
                     VStack(alignment: .leading, spacing: 6) {
                         Text("By System").font(.headline)
-                        Table(l.bySystem.sorted(using: systemSort), sortOrder: $systemSort) {
+                        Table(l.bySystem.sorted(using: systemSort), selection: highlight.row("t117"), sortOrder: $systemSort) {
                             TableColumn("System", value: \.name) { Text($0.name) }
                             TableColumn("Security", value: \.securitySort) { system in
                                 if let security = system.security {
@@ -140,7 +141,7 @@ struct MiningLedgerView: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Ledger").font(.headline)
-                    Table(l.entries.sorted(using: entrySort), sortOrder: $entrySort) {
+                    Table(l.entries.sorted(using: entrySort), selection: highlight.row("t143"), sortOrder: $entrySort) {
                         TableColumn("Date", value: \.date) { Text($0.date).monospacedDigit() }
                             .width(min: 80, ideal: 100)
                         TableColumn("Ore", value: \.name) { Text($0.name) }

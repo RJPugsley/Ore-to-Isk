@@ -185,3 +185,17 @@ enum ChartStyle {
     /// Reference lines (averages, fair price): same thickness, dashed.
     static var referenceLine: StrokeStyle { StrokeStyle(lineWidth: lineWidth, dash: [4, 3]) }
 }
+
+/// Highlights the row you click in tables that don't otherwise use a selection –
+/// just to make the row easier to follow across the columns. One per view;
+/// each table gets its own key: `Table(rows, selection: highlight.row("ores"))`.
+@Observable final class RowHighlights {
+    private var picked: [String: AnyHashable] = [:]
+
+    func row<ID: Hashable>(_ key: String) -> Binding<ID?> {
+        Binding(
+            get: { self.picked[key]?.base as? ID },
+            set: { self.picked[key] = $0.map { AnyHashable($0) } }
+        )
+    }
+}
